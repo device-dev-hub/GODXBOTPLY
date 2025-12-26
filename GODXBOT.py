@@ -9,8 +9,12 @@ It combines both the Instagram automation system and Telegram bot interface.
 """
 
 import sys
+import os
 import logging
 import subprocess
+
+# Add current directory to Python path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -66,7 +70,6 @@ def install_playwright_browsers():
 
 def start_telegram_bot():
     """Start the Telegram bot with Instagram automation."""
-    import os
     from telegram_bot import main as bot_main
     
     logger.info("=" * 50)
@@ -75,13 +78,6 @@ def start_telegram_bot():
     logger.info("📱 Starting Telegram Bot...")
     logger.info("🤖 Instagram Automation System Ready")
     logger.info("=" * 50 + "\n")
-    
-    # Verify token exists
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
-    if not token:
-        logger.error("❌ TELEGRAM_BOT_TOKEN environment variable not set!")
-        logger.error("Please set your Telegram bot token before running.")
-        return False
     
     try:
         bot_main()
