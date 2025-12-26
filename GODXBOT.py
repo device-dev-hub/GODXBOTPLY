@@ -1,27 +1,362 @@
 #!/usr/bin/env python3
 """
-ＰＹＴＨＯＮ 𝘼𝙐𝙏𝙊𝙈𝘼𝙏𝙄𝙊𝙉 𝘽𝙔 𝘿𝙀𝙑 ⚡⚡
+ＰＹＴＨＯＮ 𝘼𝙐𝙏𝙊𝙈𝘰𝙏𝙀 𝘽𝙔 𝘿𝙀𝙑 ⚡⚡
 Instagram DM Automation + Telegram Bot
 Creator: @god_olds
 
-This is the main entry point for VPS deployment.
-It combines both the Instagram automation system and Telegram bot interface.
+Single unified file for VPS deployment.
+Includes dependency check, Instagram automation engine, and Telegram bot interface.
 """
 
 import sys
 import os
+import asyncio
 import logging
 import subprocess
+import random
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ConversationHandler,
+    ContextTypes,
+    filters,
+)
+from playwright.async_api import async_playwright
 
-# Add current directory to Python path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# INSTAGRAM AUTOMATION ENGINE
+# ============================================================================
+
+MESSAGES = [
+    "━━━━━━━━ 💗᪲᪲᪲࣪ ִֶָ☾.ᯓᡣ𐭩🤍ྀི    ✝ 𝐀ɴᴛᴀ𝐑 𝐌ᴀɴ𝐓ᴀʀ 𝐒ʜᴀɪ𝐓ᴀɴ𝐈 𝐊ʜᴏ𝐏ᴀᴅ𝐀 {target} 𝐆ᴀ𝐑ɪ𝐁 𝐊ɪ 𝐀ᴍᴍ𝐈 𝐊ᴀ 𝐊ᴀʟ𝐀 𝐁ʜᴏs𝐃ᴀ  ━━━━━━━━",
+    "🌸 {target}, you are the most beautiful person I've ever seen 🌸",
+    "💕 Missing you so much {target}! 💕",
+    "✨ You shine brighter than anyone {target} ✨",
+]
+
+class InstagramAutomation:
+    """Instagram DM automation engine using Playwright browser automation."""
+    
+    def __init__(self, session_id: str, dm_url: str, target_name: str, task_count: int = 30):
+        self.session_id = session_id
+        self.dm_url = dm_url
+        self.target_name = target_name
+        self.task_count = min(task_count, 80)
+        self.running = False
+        self.browser = None
+        self.context = None
+        self.playwright = None
+
+    async def send_loop(self, context):
+        """Continuously send messages from browser context."""
+        page = await context.new_page()
+        while self.running:
+            try:
+                await page.goto(self.dm_url, wait_until='load', timeout=0)
+
+                selectors = [
+                    'div[aria-label="Message"][role="textbox"]',
+                    'div[contenteditable="true"][role="textbox"]',
+                    'textarea[placeholder*="Message"]'
+                ]
+
+                msg_input = None
+                while self.running:
+                    for selector in selectors:
+                        try:
+                            msg_input = page.locator(selector)
+                            if await msg_input.is_visible():
+                                logging.info(f"Found input with selector: {selector}")
+                                break
+                        except:
+                            continue
+
+                    if msg_input and await msg_input.is_visible():
+                        break
+
+                    await asyncio.sleep(5)
+
+                while self.running and msg_input:
+                    try:
+                        base_msg = random.choice(MESSAGES)
+                        msg = base_msg.replace("{target}", self.target_name)
+
+                        await msg_input.fill(msg)
+                        await page.keyboard.press("Enter")
+                        logging.info(f"[{self.target_name}] Sent message")
+                        await asyncio.sleep(0.5)
+                    except Exception as e:
+                        logging.error(f"Send failed: {e}. Re-verifying input...")
+                        break
+
+            except Exception as e:
+                logging.error(f"Page level error: {e}. Retrying navigation...")
+                await asyncio.sleep(5)
+
+    async def start(self):
+        """Start automation with concurrent browser tasks."""
+        try:
+            self.running = True
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
+            )
+            self.context = await self.browser.new_context()
+            await self.context.add_cookies([{
+                "name": "sessionid",
+                "value": self.session_id,
+                "domain": ".instagram.com",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "None"
+            }])
+
+            logging.info(f"Starting {self.task_count} concurrent tasks for {self.target_name}...")
+            tasks = [asyncio.create_task(self.send_loop(self.context)) for _ in range(self.task_count)]
+            await asyncio.gather(*tasks)
+
+        except Exception as e:
+            logging.error(f"Critical error: {e}")
+        finally:
+            await self.stop()
+
+    async def stop(self):
+        """Stop automation and cleanup."""
+        self.running = False
+        if self.browser:
+            await self.browser.close()
+        if self.playwright:
+            await self.playwright.stop()
+        logging.info("Instagram automation stopped")
+
+
+# ============================================================================
+# TELEGRAM BOT INTERFACE
+# ============================================================================
+
+ASKING_SESSION_ID, ASKING_DM_URL, ASKING_TARGET_NAME, ASKING_TASK_COUNT, RUNNING = range(5)
+
+user_sessions = {}
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start conversation handler."""
+    if not update.effective_user or not update.message:
+        return ConversationHandler.END
+    
+    user_id = update.effective_user.id
+    
+    if user_id in user_sessions and user_sessions[user_id].get('running'):
+        await update.message.reply_text(
+            "You already have an active session! Use /stop to stop it first."
+        )
+        return ConversationHandler.END
+    
+    await update.message.reply_text(
+        "🚀 Welcome to ＰＹＴＨＯＮ 𝘼𝙐𝙏𝙊𝙈𝘺𝙏𝙀 𝘽𝙔 𝘿𝙀𝙑 ⚡⚡\n"
+        "┌─────────────────────────────────┐\n"
+        "│ Instagram DM Automation Bot     │\n"
+        "│ @god_olds                       │\n"
+        "└─────────────────────────────────┘\n\n"
+        "🔐 Please provide your Instagram session ID (sessionid cookie):"
+    )
+    return ASKING_SESSION_ID
+
+
+async def get_session_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive and store session ID."""
+    if not update.effective_user or not update.message or not update.message.text:
+        return ASKING_SESSION_ID
+    
+    user_id = update.effective_user.id
+    context.user_data['session_id'] = update.message.text
+    
+    await update.message.reply_text(
+        "✅ Session ID saved!\n"
+        "🔗 Now provide the Instagram DM/Group Chat URL:"
+    )
+    return ASKING_DM_URL
+
+
+async def get_dm_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive and store DM URL."""
+    if not update.effective_user or not update.message or not update.message.text:
+        return ASKING_DM_URL
+    
+    user_id = update.effective_user.id
+    context.user_data['dm_url'] = update.message.text
+    
+    await update.message.reply_text(
+        "🎯 URL saved!\n"
+        "👤 Now enter the target name (who you're messaging):"
+    )
+    return ASKING_TARGET_NAME
+
+
+async def get_target_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive and store target name."""
+    if not update.effective_user or not update.message or not update.message.text:
+        return ASKING_TARGET_NAME
+    
+    user_id = update.effective_user.id
+    context.user_data['target_name'] = update.message.text
+    
+    await update.message.reply_text(
+        "💾 Target saved!\n"
+        "⚙️ How many concurrent tasks? (1-80, default 30):"
+    )
+    return ASKING_TASK_COUNT
+
+
+async def get_task_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive task count and start automation."""
+    if not update.effective_user or not update.message or not update.message.text:
+        return ASKING_TASK_COUNT
+    
+    user_id = update.effective_user.id
+    
+    try:
+        task_count = int(update.message.text)
+        task_count = max(1, min(task_count, 80))
+    except ValueError:
+        task_count = 30
+    
+    context.user_data['task_count'] = task_count
+    
+    session_id = context.user_data['session_id']
+    dm_url = context.user_data['dm_url']
+    target_name = context.user_data['target_name']
+    
+    await update.message.reply_text(
+        f"⚡ Configuration Summary:\n"
+        f"┌─────────────────────────────────┐\n"
+        f"│ 👤 Target: {target_name}\n"
+        f"│ 🔄 Tasks: {task_count}\n"
+        f"│ 📊 Status: Starting...\n"
+        f"└─────────────────────────────────┘",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    
+    automation = InstagramAutomation(session_id, dm_url, target_name, task_count)
+    user_sessions[user_id] = {
+        'automation': automation,
+        'running': True,
+        'task': asyncio.create_task(automation.start())
+    }
+    
+    await update.message.reply_text(
+        f"🚀 ＰＹＴＨＯＮ 𝘼𝙐𝙏𝙊𝙈𝘰𝙏𝙀 is running! ⚡⚡\n\n"
+        f"📱 Use /status to check progress\n"
+        f"🛑 Use /stop to halt automation\n"
+        f"ℹ️ Use /help for commands"
+    )
+    
+    return ConversationHandler.END
+
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Check current session status."""
+    if not update.effective_user or not update.message:
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id not in user_sessions or not user_sessions[user_id].get('running'):
+        await update.message.reply_text("No active session. Use /start to begin.")
+        return
+    
+    session = user_sessions[user_id]
+    automation = session['automation']
+    
+    await update.message.reply_text(
+        f"📊 Session Status:\n"
+        f"┌─────────────────────────────────┐\n"
+        f"│ 👤 Target: {automation.target_name}\n"
+        f"│ 🔄 Tasks: {automation.task_count}\n"
+        f"│ 🟢 Status: ✅ Running\n"
+        f"└─────────────────────────────────┘\n\n"
+        f"🛑 Use /stop to halt automation"
+    )
+
+
+async def stop_automation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Stop active automation."""
+    if not update.effective_user or not update.message:
+        return
+    
+    user_id = update.effective_user.id
+    
+    if user_id not in user_sessions or not user_sessions[user_id].get('running'):
+        await update.message.reply_text("No active session to stop.")
+        return
+    
+    session = user_sessions[user_id]
+    automation = session['automation']
+    
+    await update.message.reply_text("Stopping automation...")
+    await automation.stop()
+    
+    session['running'] = False
+    if not session['task'].done():
+        session['task'].cancel()
+    
+    await update.message.reply_text("🛑 Automation stopped! ✅\n\n📱 Use /start to begin again")
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel conversation."""
+    if not update.message:
+        return ConversationHandler.END
+    
+    await update.message.reply_text("Cancelled. Use /start to begin again.")
+    return ConversationHandler.END
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show help message."""
+    if not update.message:
+        return
+    
+    help_text = """
+🚀 ＰＹＴＨＯＮ 𝘼𝙐𝙏𝙊𝙈𝘺𝙏𝙀 𝘽𝙔 𝘿𝙀𝙑 ⚡⚡
+
+┌─────────────────────────────────┐
+│ @god_olds                       │
+│ Instagram DM Bot                │
+└─────────────────────────────────┘
+
+📋 Commands:
+/start  - 🚀 Begin automation setup
+/status - 📊 Check session status
+/stop   - 🛑 Stop automation
+/help   - ℹ️ Show this message
+
+🔧 How it works:
+1️⃣ Use /start and provide Instagram session ID
+2️⃣ Provide the DM/Group chat URL
+3️⃣ Enter target name and number of tasks
+4️⃣ Bot sends messages automatically
+5️⃣ Use /status to monitor or /stop to halt
+
+⚡ Fully automated Instagram DM sending!
+"""
+    await update.message.reply_text(help_text)
+
+
+# ============================================================================
+# STARTUP AND DEPLOYMENT
+# ============================================================================
 
 def check_dependencies():
     """Verify all required dependencies are installed."""
@@ -29,10 +364,10 @@ def check_dependencies():
         'playwright': 'playwright',
         'cfonts': 'python-cfonts',
         'telegram': 'python-telegram-bot',
-        'asyncio': None,  # Built-in
-        'os': None,  # Built-in
-        'random': None,  # Built-in
-        'logging': None,  # Built-in
+        'asyncio': None,
+        'os': None,
+        'random': None,
+        'logging': None,
     }
     
     logger.info("🔍 Checking dependencies...")
@@ -62,25 +397,42 @@ def check_dependencies():
     return True
 
 
-def install_playwright_browsers():
-    """Playwright browsers will be auto-installed on first use."""
-    logger.info("📦 Playwright browsers will auto-install on first automation run\n")
-    return True
-
-
 def start_telegram_bot():
     """Start the Telegram bot with Instagram automation."""
-    from telegram_bot import main as bot_main
-    
     logger.info("=" * 50)
-    logger.info("🚀 ＰＹＴＨＯＮ 𝘼𝙐𝙏𝙊𝙈𝘼𝙏𝙄𝙊𝙉 𝘽𝙔 𝘿𝙀𝙑 ⚡⚡")
+    logger.info("🚀 ＰＹＴＨＯＮ 𝘼𝙐𝙏𝙊𝙈𝘰𝙏𝙀 𝘽𝙔 𝘿𝙀𝙑 ⚡⚡")
     logger.info("=" * 50)
     logger.info("📱 Starting Telegram Bot...")
     logger.info("🤖 Instagram Automation System Ready")
     logger.info("=" * 50 + "\n")
     
+    token = "8571782559:AAGi50dSuHCbyaLE5mFAwRp1yxCR5CxR9SU"
+    
+    if not token:
+        logger.error("❌ Bot token not configured!")
+        return False
+    
     try:
-        bot_main()
+        app = Application.builder().token(token).build()
+        
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("start", start)],
+            states={
+                ASKING_SESSION_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_session_id)],
+                ASKING_DM_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dm_url)],
+                ASKING_TARGET_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_target_name)],
+                ASKING_TASK_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_task_count)],
+            },
+            fallbacks=[CommandHandler("cancel", cancel)],
+        )
+        
+        app.add_handler(conv_handler)
+        app.add_handler(CommandHandler("status", status))
+        app.add_handler(CommandHandler("stop", stop_automation))
+        app.add_handler(CommandHandler("help", help_command))
+        
+        app.run_polling()
+        return True
     except KeyboardInterrupt:
         logger.info("\n🛑 Bot stopped by user")
         return True
@@ -95,17 +447,12 @@ def main():
     logger.info("STARTUP CHECK")
     logger.info("=" * 50 + "\n")
     
-    # Step 1: Check dependencies
     if not check_dependencies():
         logger.error("\n❌ Dependency check failed. Please install required packages.")
         sys.exit(1)
     
-    # Step 2: Install Playwright browsers
-    if not install_playwright_browsers():
-        logger.error("\n❌ Playwright browser installation failed.")
-        sys.exit(1)
+    logger.info("📦 Playwright browsers will auto-install on first automation run\n")
     
-    # Step 3: Start the bot
     if not start_telegram_bot():
         logger.error("\n❌ Bot startup failed.")
         sys.exit(1)
