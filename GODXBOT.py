@@ -406,7 +406,7 @@ def start_telegram_bot():
     logger.info("🤖 Instagram Automation System Ready")
     logger.info("=" * 50 + "\n")
     
-    token = "8571782559:AAGi50dSuHCbyaLE5mFAwRp1yxCR5CxR9SU"
+    token = "8571782559:AAGzXAgR1Lo6yVwQOB8PgwrqfssTbdyrMRw"
     
     if not token:
         logger.error("❌ Bot token not configured!")
